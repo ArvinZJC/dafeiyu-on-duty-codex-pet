@@ -124,3 +124,8 @@ tmbootpicker.efi
 .superpowers/
 .worktrees/
 docs/superpowers/
+.work/
+
+# Python bytecode caches.
+__pycache__/
+*.py[cod]
