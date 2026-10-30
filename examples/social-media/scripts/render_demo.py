@@ -97,9 +97,13 @@ class Desk:
         self.text(im, (215, 1425), title, 42, BLUE)
         self.text(im, (215, 1495), subtitle, 28, GREY)
 
-    def frame(self, t):
+    def frame(self, t, recording=None):
         if t < 7:
-            return Image.open(self.work / "intro.png").convert("RGB")
+            im = (
+                recording.copy()
+                if recording is not None
+                else Image.open(self.work / "intro.png").convert("RGB")
+            )
         elif t < 11:
             u = t - 7
             row = 0 if u < 2 else 4
@@ -309,7 +313,7 @@ def main():
             if target != (work / "review.jpg").resolve():
                 shutil.copyfile(work / "review.jpg", target)
             return
-        silent = work / "body.mp4"
+        silent = work / "silent.mp4"
         command = [
             ffmpeg,
             "-hide_banner",
@@ -341,6 +345,25 @@ def main():
         ]
         proc = subprocess.Popen(command, stdin=subprocess.PIPE)
         try:
+            # Decode the recording so it receives the same timed progress bar
+            # as the generated scenes, including the frame at the transition.
+            with subprocess.Popen(
+                [
+                    ffmpeg, "-hide_banner", "-loglevel", "error",
+                    "-i", str(intro), "-t", "7", "-an",
+                    "-f", "rawvideo", "-pix_fmt", "rgb24", "-",
+                ],
+                stdout=subprocess.PIPE,
+            ) as recording:
+                for i in range(7 * FPS):
+                    pixels = recording.stdout.read(W * H * 3)
+                    if len(pixels) != W * H * 3:
+                        raise RuntimeError("Screen recording ended before seven seconds.")
+                    im = Image.frombytes("RGB", (W, H), pixels)
+                    proc.stdin.write(desk.frame(i / FPS, im).tobytes())
+                recording.stdout.close()
+                if recording.wait():
+                    raise RuntimeError("Screen recording decoding failed.")
             for i in range(7 * FPS, DURATION * FPS):
                 proc.stdin.write(desk.frame(i / FPS).tobytes())
                 if i % 300 == 0:
@@ -349,7 +372,6 @@ def main():
             proc.stdin.close()
         if proc.wait():
             raise RuntimeError("Video encoding failed.")
-        (work / "segments.txt").write_text("file 'opening.mp4'\nfile 'body.mp4'\n")
         run(
             [
                 ffmpeg,
@@ -357,12 +379,8 @@ def main():
                 "-loglevel",
                 "error",
                 "-y",
-                "-f",
-                "concat",
-                "-safe",
-                "0",
                 "-i",
-                str(work / "segments.txt"),
+                str(silent),
                 "-i",
                 str(ASSETS / "merry-go.mp3"),
                 "-filter_complex",
